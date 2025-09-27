@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Empire Shooter</title>
+<style>
+  :root{
+    --paper:#fdf6e3; --ink:#3b2f1e; --gold:#d4af37; --bronze:#a67c52; --accent:#6b4c2e;
+  }
+  body{ margin:0; background:linear-gradient(to bottom, var(--paper), #c2b280); font-family:Georgia, serif; color:var(--ink); }
+  header{ text-align:center; padding:10px 0; border-bottom:3px double var(--bronze); background:linear-gradient(to bottom,#fffaf0,var(--paper)); }
+  header h1{ margin:6px 0 2px; color:var(--accent); }
+  .bar{ display:flex; flex-wrap:wrap; gap:8px; justify-content:center; align-items:center; padding:8px; background:#eadfbd; border-bottom:2px solid var(--bronze);}
+  button,select{ padding:8px 12px; font-size:16px; background:#f4e9d8; color:var(--ink); border:2px solid var(--bronze); border-radius:6px; cursor:pointer;}
+  button:hover,select:hover{ filter:brightness(1.05); }
+  .map{ display:flex; flex-wrap:wrap; gap:8px; justify-content:center; padding:10px; }
+  .map button{ min-width:170px; background:linear-gradient(to bottom,#fff4dc,#ead2a6); border:2px solid var(--gold); }
+  .stage{ position:relative; max-width:900px; margin:10px auto; }
+  canvas{ display:block; width:720px; height:480px; margin:0 auto; background:#fff8e1; border:4px solid var(--gold); box-shadow:0 6px 24px rgba(166,124,82,0.35); }
+  #hud{ position:absolute; top:8px; left:50%; transform:translateX(-360px); background:rgba(255,248,220,0.92); border:2px solid var(--bronze); padding:6px 10px; font-size:14px; border-radius:6px; width:280px; }
+  .overlay{ display:none; position:absolute; top:14%; left:50%; transform:translateX(-50%); width:70%; background:#fff8e1; border:3px solid var(--gold); padding:18px; text-align:center; box-shadow:0 0 20px var(--bronze); }
+  .overlay h2{ margin-top:0; color:var(--accent); }
+  .note{ text-align:center; font-size:12px; color:#6b4c2e; margin:6px 0 12px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🏛️ Empire Shooter</h1>
+    <div class="note">Quartz pillars with ancient vines mark the battlefield’s boundaries.</div>
+  </header>
+
+  <div class="bar">
+    <button id="tutorialBtn">Tutorial</button>
+    <button id="shopBtn">Shop (M)</button>
+    <button id="pauseBtn">Pause (P)</button>
+    <button id="resumeBtn">Resume (R)</button>
+    <button id="resetBtn">Reset</button>
+    <label for="skinSelector"><strong>Skin:</strong></label>
+    <select id="skinSelector">
+      <option value="gold">Imperial Gold</option>
+      <option value="crimson">Crimson Guard</option>
+      <option value="emerald">Emerald Sentinel</option>
+    </select>
+  </div>
+
+  <div class="map">
+    <!-- Easy levels (enemySpeed < 1.2) -->
+    <button data-prov="Training Grounds">Training Grounds</button>
+    <button data-prov="Forgotten Shrine">Forgotten Shrine</button>
+    <button data-prov="Marble Garden">Marble Garden</button>
+    <!-- Original provinces -->
+    <button data-prov="Byzantium Rift">Byzantium Rift</button>
+    <button data-prov="Imperial Frontier">Imperial Frontier</button>
+    <button data-prov="Aether Alexandria">Aether Alexandria</button>
+    <button data-prov="Crimson Khanate">Crimson Khanate</button>
+    <button data-prov="Eclipse Throne">Eclipse Throne</button>
+  </div>
+
+  <div class="stage">
+    <div id="hud">Score: 0 | Lives: 3 | Province: —</div>
+    <canvas id="gameCanvas" width="720" height="480"></canvas>
+
+    <div id="loreBox" class="overlay"></div>
+
+    <div id="tutorialBox" class="overlay">
+      <h2>📜 Tutorial</h2>
+      <p>Controls: ⬅️ ➡️ Move | Spacebar: Shoot | P: Pause | R: Resume | M: Shop</p>
+      <p>Tip: Stay within the quartz pillars. Buy upgrades to survive longer.</p>
+      <button id="startFromTutorial">Start</button>
+    </div>
+
+    <div id="shopBox" class="overlay">
+      <h2>⚔️ Upgrade Shop</h2>
+      <p>Spend score points on upgrades</p>
+      <button data-up="fire">Rapid Fire (5)</button>
+      <button data-up="speed">Speed Boots (5)</button>
+      <button data-up="life">Extra Life (10)</button>
+      <button data-up="power">Power Shot (8)</button>
+      <br><br>
+      <button id="closeShopBtn">Close</button>
+    </div>
+  </div>
+
+<script>
+  // Canvas & UI refs
+  const canvas = document.getElementById("gameCanvas");
+  const ctx = canvas.getContext("2d");
+  const hud = document.getElementById("hud");
+  const loreBox = document.getElementById("loreBox");
+  const tutorialBox = document.getElementById("tutorialBox");
+  const shopBox = document.getElementById("shopBox");
+
+  const tutorialBtn = document.getElementById("tutorialBtn");
+  const startFromTutorial = document.getElementById("startFromTutorial");
+  const shopBtn = document.getElementById("shopBtn");
+  const closeShopBtn = document.getElementById("closeShopBtn");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const resumeBtn = document.getElementById("resumeBtn");
+  const resetBtn = document.getElementById("resetBtn");
+  const skinSelector = document.getElementById("skinSelector");
+
+  // Provinces
+  const provinces = {
+    "Training Grounds":  { lore:"A safe arena for recruits.",                         spawnRate:0.014, enemySpeed:0.9 },
+    "Forgotten Shrine":  { lore:"Ruins where spirits linger.",                        spawnRate:0.015, enemySpeed:1.0 },
+    "Marble Garden":     { lore:"A serene courtyard with lurking foes.",              spawnRate:0.016, enemySpeed:1.1 },
+    "Byzantium Rift":    { lore:"Shattered relics of empire. Shielded sentinels.",    spawnRate:0.018, enemySpeed:1.2, shield:true },
+    "Imperial Frontier": { lore:"The edge of civilization; fast scouts.",             spawnRate:0.022, enemySpeed:1.4 },
+    "Aether Alexandria": { lore:"Archive of ancient tech; zigzag flyers.",            spawnRate:0.020, enemySpeed:1.3, zigzag:true },
+    "Crimson Khanate":   { lore:"Nomadic warlords; occasional kamikaze.",             spawnRate:0.021, enemySpeed:1.5, kamikaze:true },
+    "Eclipse Throne":    { lore:"Final bastion; mixed elite threats.",                spawnRate:0.024, enemySpeed:1.6, zigzag:true, kamikaze:true }
+  };
+
+  const skins = {
+    gold:    { body:"#d4af37", trim:"#a67c52", shield:"#8c6b3d" },
+    crimson: { body:"#a52a2a", trim:"#8b1a1a", shield:"#5a1f1f" },
+    emerald: { body:"#228b22", trim:"#1f6b1f", shield:"#145014" }
+  };
+
+  // Game state
+  let player = { x: canvas.width/2-14, y: canvas.height-70, w:28, h:40, skin:skins.gold, speed:7, lives:3, power:false };
+  let bullets = [];
+  let enemies = [];
+  let score = 0;
+  let currentProvince = null;
+  let running = false;
+  let animationId = null;
+  let lastShot = 0;
+  let fireDelay = 180;
+
+  // Map buttons
+  document.querySelectorAll(".map button").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const name = btn.getAttribute("data-prov");
+      selectProvince(name);
+    });
+  });
+
+  // UI events
+  tutorialBtn.addEventListener("click", ()=>{ showOverlay(tutorialBox); stopLoop(); });
+  startFromTutorial.addEventListener("click", ()=>{ hideOverlay(tutorialBox); startGame(); });
+  shopBtn.addEventListener("click", toggleShop);
+  closeShopBtn.addEventListener("click", ()=>{ hideOverlay(shopBox); resumeGame(); });
+
+  pauseBtn.addEventListener("click", pauseGame);
+  resumeBtn.addEventListener("click", resumeGame);
+  resetBtn.addEventListener("click", resetGame);
+  skinSelector.addEventListener("change", ()=>{ player.skin = skins[skinSelector.value]; });
+
+  // Shop purchases
+  shopBox.querySelectorAll("button[data-up]").forEach(b=>{
+    b.addEventListener("click", ()=>{
+      const type = b.getAttribute("data-up");
+      buyUpgrade(type);
+    });
+  });
+
+  // Controls
+  document.addEventListener("keydown", (e)=>{
+    const k = e.key.toLowerCase();
+    if(k==="m"){ toggleShop(); return; }
+    if(k==="p"){ pauseGame(); return; }
+    if(k==="r"){ resumeGame(); return; }
+    if(!running) return;
+
+    if(e.key==="ArrowLeft"){ player.x = Math.max(24, player.x - player.speed); }
+    else if(e.key==="ArrowRight"){ player.x = Math.min(canvas.width - player.w - 24, player.x + player.speed); }
+    else if(e.key===" "){
+      const now = performance.now();
+      if(now - lastShot >= fireDelay){
+        lastShot = now;
+        const cx = player.x + player.w/2;
+        bullets.push({ x: cx-2, y: player.y+4, speed: 7, dmg: (player.power?2:1) });
+      }
+    }
+  });
+
+  // Province selection -> lore -> start
+  function selectProvince(name){
+    currentProvince = name;
+    loreBox.innerHTML = `<h2>${name}</h2><p>${provinces[name].lore}</p><p>Prepare for battle…</p>`;
+    showOverlay(loreBox);
+    stopLoop();
+    setTimeout(()=>{ hideOverlay(loreBox); startGame(); }, 2200);
+  }
+
+  // Lifecycle
+  function startGame(){
+    bullets=[]; enemies=[]; score=0; player.lives=3; player.power=false;
+    player.x = canvas.width/2 - player.w/2; player.y = canvas.height - 70;
+    running = true; updateHUD(); gameLoop();
+  }
+  function pauseGame(){ stopLoop(); }
+  function resumeGame(){ if(!running){ running = true; gameLoop(); } }
+  function resetGame(){
+    stopLoop(); bullets=[]; enemies=[]; score=0; player.lives=3; player.power=false; currentProvince=null;
+    updateHUD(); clearCanvas(); drawPillars(); drawProtagonist();
+  }
+  function stopLoop(){ running = false; if(animationId) cancelAnimationFrame(animationId); }
+
+  // Overlays
+  function showOverlay(el){ el.style.display="block"; }
+  function hideOverlay(el){ el.style.display="none"; }
+  function toggleShop(){
+    if(shopBox.style.display==="block"){ hideOverlay(shopBox); resumeGame(); }
+    else { showOverlay(shopBox); stopLoop(); }
+  }
+
+  // Shop logic
+  function buyUpgrade(type){
+    if(type==="fire" && score>=5){ score-=5; fireDelay = Math.max(80, fireDelay-30); }
+    else if(type==="speed" && score>=5){ score-=5; player.speed += 1; }
+    else if(type==="life" && score>=10){ score-=10; player.lives += 1; }
+    else if(type==="power" && score>=8){ score-=8; player.power = true; }
+    updateHUD();
+  }
+
+  // HUD
+  function updateHUD(){ hud.textContent = `Score: ${score} | Lives: ${player.lives} | Province: ${currentProvince || "—"}`; }
+
+  // Drawing: pillars & vines
+  function drawPillars(){
+    ctx.fillStyle = "#e7e7ef"; // quartz
+    ctx.fillRect(10, 0, 14, canvas.height);
+    ctx.fillRect(canvas.width-24, 0, 14, canvas.height);
+    ctx.fillStyle = "#2e7d32"; // vines
+    for(let i=0;i<canvas.height;i+=70){
+      ctx.fillRect(14, i+10, 4, 40);
+      ctx.fillRect(canvas.width-20, i+30, 4, 40);
+    }
+    // Caps
+    ctx.fillStyle = "#dcdcf1";
+    ctx.fillRect(8, 8, 18, 8);
+    ctx.fillRect(canvas.width-26, 8, 18, 8);
+  }
+
+  // Protagonist: small armored knight
+  function drawProtagonist(){
+    const s = player.skin;
+    const x = player.x, y = player.y, w = player.w, h = player.h;
+    // Body armor
+    ctx.fillStyle = s.body;
+    ctx.fillRect(x, y+8, w, h-8);
+    // Helmet dome
+    ctx.fillStyle = "#a0a0a8";
+    ctx.beginPath();
+    ctx.arc(x + w/2, y+10, w/2, Math.PI, 0);
+    ctx.fill();
+    // Helmet plume
+    ctx.strokeStyle = s.trim; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x+w/2, y+6); ctx.quadraticCurveTo(x+w/2+6, y-6, x+w/2+2, y-10); ctx.stroke();
+    // Visor slit
+    ctx.fillStyle = "#2b2b2b";
+    ctx.fillRect(x+6, y+12, w-12, 3);
+    // Shield (left)
+    ctx.fillStyle = s.shield;
+    ctx.beginPath();
+    ctx.moveTo(x-6, y+20);
+    ctx.quadraticCurveTo(x-10, y+30, x-6, y+40);
+    ctx.quadraticCurveTo(x-2, y+32, x-6, y+20);
+    ctx.fill();
+    // Border
+    ctx.strokeStyle = "#8c7a5a"; ctx.lineWidth = 1.5;
+    ctx.strokeRect(x, y+8, w, h-8);
+  }
+
+  // Ancient helmet enemy
+  function drawHelmetEnemy(e, t){
+    const pulse = 0.3 + 0.2*Math.abs(Math.sin((t||0)*0.003 + e.seed));
+    const x=e.x, y=e.y, w=e.w, h=e.h;
+    // Base helmet shape
+    ctx.fillStyle = e.metal;
+    ctx.fillRect(x+4, y+8, w-8, h-10);
+    ctx.beginPath(); ctx.arc(x+w/2, y+10, w/2-4, Math.PI, 0); ctx.fill();
+    // Crest
+    ctx.fillStyle = e.crest;
+    ctx.fillRect(x+w/2-2, y-2, 4, 10);
+    // Visor slit
+    ctx.fillStyle = "#2b2b2b";
+    ctx.fillRect(x+6, y+14, w-12, 3);
+    // Cheek plates
+    ctx.fillStyle = e.metalShadow;
+    ctx.fillRect(x+4, y+18, 6, h-20);
+    ctx.fillRect(x+w-10, y+18, 6, h-20);
+    // Outline
+    ctx.strokeStyle = `rgba(166,124,82,${0.6+pulse})`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x+3, y+6, w-6, h-6);
+  }
+
+  // Loop
+  function gameLoop(ts){
+    if(!running) return;
+    clearCanvas();
+    drawPillars();
+    drawProtagonist();
+    drawBullets();
+    drawEnemies(ts);
+    moveBullets();
+    moveEnemies();
+    detectCollisions();
+    spawnEnemies();
+    animationId = requestAnimationFrame(gameLoop);
+  }
+
+  function clearCanvas(){ ctx.clearRect(0,0,canvas.width,canvas.height); }
+
+  // Bullets
+  function drawBullets(){
+    ctx.fillStyle = "#4a3a24";
+    bullets.forEach(b=> ctx.fillRect(b.x, b.y, 4, 10));
+  }
+  function moveBullets(){
+    bullets.forEach(b=> b.y -= b.speed);
+    bullets = bullets.filter(b=> b.y > -12);
+  }
+
+  // Enemies
+  function drawEnemies(ts){
+    enemies.forEach(e=> drawHelmetEnemy(e, ts));
+  }
+  function spawnEnemies(){
+    if(!currentProvince) return;
+    const conf = provinces[currentProvince];
+    const rate = conf.spawnRate || 0.02;
+    if(Math.random() < rate){
+      const w=28, h=28;
+      const palette = [
+        { metal:"#bfbfbf", metalShadow:"#9a9a9a", crest:"#7a1212" },
+        { metal:"#d0c8b0", metalShadow:"#af9f80", crest:"#1b5e20" },
+        { metal:"#c0b7a6", metalShadow:"#9b8f7a", crest:"#3f51b5" }
+      ];
+      const p = palette[Math.floor(Math.random()*palette.length)];
+      const e = {
+        x: 24 + Math.random() * (canvas.width - 48 - w),
+        y: -h,
+        w, h,
+        metal: p.metal,
+        metalShadow: p.metalShadow,
+        crest: p.crest,
+        vy: conf.enemySpeed || 1.3,
+        vx: 0,
+        seed: Math.random()*1000,
+        zigzag: !!conf.zigzag && Math.random()<0.7,
+        kamikaze: !!conf.kamikaze && Math.random()<0.2,
+        hp: conf.shield ? 2 : 1
+      };
+      if(e.zigzag){ e.vx = (Math.random()<0.5?-1:1) * (0.7 + Math.random()*0.6); }
+      enemies.push(e);
+    }
+  }
+  function moveEnemies(){
+    enemies.forEach(e=>{
+      e.y += e.vy;
+      if(e.zigzag){
+        e.x += e.vx;
+        if(e.x<=24 || e.x+e.w>=canvas.width-24) e.vx *= -1;
+      }
+      if(e.kamikaze){
+        const targetX = player.x + player.w/2;
+        const delta = targetX - (e.x + e.w/2);
+        e.x += Math.sign(delta) * 0.5;
+      }
+    });
+    const keep = [];
+    enemies.forEach(e=>{
+      if(e.y < canvas.height) keep.push(e);
+      else { player.lives -= 1; updateHUD(); }
+    });
+    enemies = keep;
+    if(player.lives <= 0){ defeat(); }
+  }
+
+  // Collisions
+  function detectCollisions(){
+    // bullets vs enemies
+    for(let bi=bullets.length-1; bi>=0; bi--){
+      const b = bullets[bi];
+      for(let ei=enemies.length-1; ei>=0; ei--){
+        const e = enemies[ei];
+        if(b.x < e.x + e.w && b.x + 4 > e.x && b.y < e.y + e.h && b.y + 10 > e.y){
+          bullets.splice(bi,1);
+          e.hp -= b.dmg || 1;
+          if(e.hp<=0){ enemies.splice(ei,1); score += 1; updateHUD(); }
+          break;
+        }
+      }
+    }
+    // enemies vs player
+    for(let ei=enemies.length-1; ei>=0; ei--){
+      const e = enemies[ei];
+      if(player.x < e.x + e.w && player.x + player.w > e.x && player.y < e.y + e.h && player.y + player.h > e.y){
+        enemies.splice(ei,1);
+        player.lives -= 1; updateHUD();
+        if(player.lives <= 0){ defeat(); break; }
+      }
+    }
+  }
+
+  // Defeat overlay
+  function defeat(){
+    stopLoop();
+    loreBox.innerHTML = `<h2>Defeat</h2><p>Your stand ends here. Reset and choose a province to try again.</p>`;
+    showOverlay(loreBox);
+  }
+
+  // Start idle scene
+  updateHUD(); clearCanvas(); drawPillars(); drawProtagonist();
+</script>
+</body>
+</html>
